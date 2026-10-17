@@ -82,6 +82,22 @@
   #regbar i{display:block;height:100%;width:0;background:var(--in);transition:width .2s}
   #regcancel{margin-top:12px}
 
+  /* report */
+  input[type=date]{color-scheme:dark}
+  .rp-sum{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+  .rp-sum span{background:var(--card);border-radius:10px;padding:8px 12px;font-size:14px}
+  .rp-sum b{font-size:18px;margin-right:4px}
+  .rp-emp{border-top:1px solid var(--line);padding:10px 0}
+  .rp-emp h4{margin:0 0 6px;font-size:15px}
+  .rp-emp h4 small{color:var(--muted);font-weight:500}
+  .rp-p{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:14px}
+  .rp-p img{width:44px;height:44px;object-fit:cover;border-radius:8px;background:#000;cursor:pointer}
+  .rp-p .t{font-variant-numeric:tabular-nums;font-weight:700}
+  .badge{font-size:12px;font-weight:800;padding:3px 8px;border-radius:99px}
+  .badge.IN{background:#14532d;color:#86efac} .badge.OUT{background:#1e3a8a;color:#93c5fd}
+  #photoview{position:fixed;inset:0;z-index:20;background:#000e;display:flex;align-items:center;justify-content:center;padding:16px}
+  #photoview img{max-width:100%;max-height:100%;border-radius:12px}
+
   /* pin */
   #pinbox .pinin{max-width:240px;text-align:center;font-size:28px;letter-spacing:10px}
 </style>
@@ -145,6 +161,24 @@
   </div>
 
   <div class="sec">
+    <h3>📋 Attendance Report</h3>
+    <div class="row" style="margin-top:0">
+      <div style="flex:1;min-width:130px"><label style="margin-top:0">Se (From)</label><input id="rp_from" type="date"></div>
+      <div style="flex:1;min-width:130px"><label style="margin-top:0">Tak (To)</label><input id="rp_to" type="date"></div>
+    </div>
+    <label>Employee code / naam se dhoondo (optional)</label>
+    <input id="rp_q" placeholder="P001 ya Ramesh">
+    <div class="row">
+      <button id="rp_today">Aaj</button>
+      <button id="rp_load" class="primary">Report dikhao</button>
+      <button id="rp_csv">⬇ Excel (CSV)</button>
+    </div>
+    <div id="rp_msg" class="msg"></div>
+    <div id="rp_sum" class="rp-sum"></div>
+    <div id="rp_list"></div>
+  </div>
+
+  <div class="sec">
     <h3>Naya Employee Register</h3>
     <label>Employee Code *</label>
     <input id="r_id" placeholder="P001" autocapitalize="characters">
@@ -193,6 +227,8 @@
     <div id="s_msg" class="msg"></div>
   </div>
 </div>
+
+<div id="photoview" class="hidden"><img alt="Punch photo"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
 <script>
@@ -614,6 +650,62 @@ function askPin() {
   show('pinbox'); setTimeout(() => $('pinin').focus(), 100);
 }
 
+/* ------------------------- report ------------------------- */
+let RP = [];
+const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+const hm = ms => { const m = Math.round(ms / 60000); return Math.floor(m / 60) + 'h ' + pad(m % 60) + 'm'; };
+function rpFiltered() {
+  const q = $('rp_q').value.trim().toLowerCase();
+  return q ? RP.filter(r => String(r.emp_id).toLowerCase().includes(q) || String(r.name || '').toLowerCase().includes(q)) : RP;
+}
+async function loadReport() {
+  const from = $('rp_from').value, to = $('rp_to').value;
+  if (!from || !to) { msg('rp_msg', 'Dono date chuno', 'err'); return; }
+  if (!configured()) { msg('rp_msg', 'Pehle Settings mein kiosk key save karein', 'err'); return; }
+  msg('rp_msg', 'Load ho raha hai…');
+  try {
+    await syncQueue(true);                     // phone ki pending entries pehle bhej do
+    const j = await rpc('att_report_range', { p_from: from, p_to: to });
+    RP = j.rows || [];
+    renderReport();
+    msg('rp_msg', '✓ ' + RP.length + ' entries', 'ok');
+  } catch (e) { msg('rp_msg', 'Report nahi aayi: ' + e.message, 'err'); }
+}
+function renderReport() {
+  const rows = rpFiltered();
+  const groups = {};
+  rows.forEach(r => { const k = r.date + '|' + r.emp_id; (groups[k] = groups[k] || { date: r.date, id: r.emp_id, name: r.name, dept: r.dept, p: [] }).p.push(r); });
+  const list = Object.values(groups).sort((a, b) => b.date.split('-').reverse().join('').localeCompare(a.date.split('-').reverse().join('')) || a.id.localeCompare(b.id, undefined, { numeric: true }));
+  const people = new Set(rows.map(r => r.emp_id)).size;
+  const insideNow = list.filter(g => g.date === fmtDT(Date.now()).slice(0, 10) && g.p[g.p.length - 1].type === 'IN').length;
+  $('rp_sum').innerHTML = '<span><b>' + people + '</b>log aaye</span><span><b>' + rows.length + '</b>punch</span>' +
+    '<span><b>' + insideNow + '</b>abhi andar</span>';
+  if (!list.length) { $('rp_list').innerHTML = '<div style="color:var(--muted);font-size:14px">Is date mein koi entry nahi</div>'; return; }
+  $('rp_list').innerHTML = list.map(g => {
+    let worked = 0, inAt = null;
+    g.p.forEach(p => { if (p.type === 'IN') inAt = p.ts; else if (inAt) { worked += p.ts - inAt; inAt = null; } });
+    return '<div class="rp-emp"><h4>' + esc(g.id) + ' – ' + esc(g.name) + ' <small>' + esc(g.date) +
+      (g.dept ? ' • ' + esc(g.dept) : '') + (worked ? ' • kaam: ' + hm(worked) : '') + '</small></h4>' +
+      g.p.map(p => '<div class="rp-p">' +
+        (p.photo_url ? '<img loading="lazy" src="' + esc(p.photo_url) + '" data-big="' + esc(p.photo_url) + '">' : '<span style="width:44px"></span>') +
+        '<span class="badge ' + esc(p.type) + '">' + esc(p.type) + '</span><span class="t">' + esc(p.time) + '</span>' +
+        '<span style="color:var(--muted)">' + (p.match_pct ? p.match_pct + '%' : '') + '</span></div>').join('') + '</div>';
+  }).join('');
+}
+function downloadCSV() {
+  const rows = rpFiltered();
+  if (!rows.length) { msg('rp_msg', 'Pehle report load karo', 'err'); return; }
+  const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const csv = ['Date,Time,Emp ID,Name,Department,Type,Match %,Device,Photo']
+    .concat(rows.map(r => [r.date, r.time, r.emp_id, r.name, r.dept, r.type, r.match_pct, r.device, r.photo_url].map(cell).join(',')))
+    .join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'PTI_Attendance_' + $('rp_from').value + '_to_' + $('rp_to').value + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function setToday() { const t = ymd(new Date()); $('rp_from').value = t; $('rp_to').value = t; }
+
 /* ------------------------- camera / wake lock ------------------------- */
 async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -661,6 +753,13 @@ function bindEvents() {
   $('pincancel').onclick = () => { hide('pinbox'); mode = 'kiosk'; };
 
   $('closeadmin').onclick = closeAdmin;
+  setToday();
+  $('rp_today').onclick = () => { setToday(); loadReport(); };
+  $('rp_load').onclick = loadReport;
+  $('rp_csv').onclick = downloadCSV;
+  $('rp_q').addEventListener('input', () => { if (RP.length) renderReport(); });
+  $('rp_list').onclick = e => { const u = e.target.getAttribute && e.target.getAttribute('data-big'); if (u) { $('photoview').firstElementChild.src = u; show('photoview'); } };
+  $('photoview').onclick = () => hide('photoview');
   $('r_start').onclick = startRegister;
   $('regcancel').onclick = () => cancelRegister('Registration cancel kiya', 'err');
 
