@@ -151,6 +151,7 @@
     <button id="pinok" class="primary">Open</button>
   </div>
   <div id="pinmsg" class="msg err"></div>
+  <button id="pinforgot" style="margin-top:22px;background:transparent;color:var(--muted);text-decoration:underline;font-weight:500">PIN bhool gaye? Kiosk key se kholo</button>
 </div>
 
 <!-- Admin -->
@@ -750,6 +751,15 @@ function bindEvents() {
     else msg('pinmsg', 'Galat PIN', 'err');
   };
   $('pinin').addEventListener('keydown', e => { if (e.key === 'Enter') $('pinok').click(); });
+  $('pinforgot').onclick = () => {
+    const k = (prompt('Kiosk key daalo (Supabase → att_config table mein milegi):') || '').trim();
+    if (!k) return;
+    if (S.kioskKey && k === S.kioskKey) {
+      openAdmin();
+      msg('s_msg', 'Neeche Settings mein naya Admin PIN daal ke Save karo', 'ok');
+      $('s_pin').scrollIntoView({ block: 'center' }); $('s_pin').focus();
+    } else msg('pinmsg', 'Kiosk key galat hai', 'err');
+  };
   $('pincancel').onclick = () => { hide('pinbox'); mode = 'kiosk'; };
 
   $('closeadmin').onclick = closeAdmin;
