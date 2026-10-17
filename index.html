@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>PTI Face Attendance</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#111827; --card:#1f2937; --line:#334155; --text:#f8fafc; --muted:#94a3b8;
+    --in:#16a34a; --out:#2563eb; --warn:#d97706; --err:#dc2626; --accent:#f97316;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans",sans-serif;overflow:hidden}
+  #video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);background:#000}
+  .hidden{display:none!important}
+
+  /* top bar */
+  #topbar{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));background:linear-gradient(#000c,#0000);z-index:5;user-select:none}
+  #brand{font-weight:800;font-size:18px;letter-spacing:.3px}
+  #brand small{display:block;font-weight:500;font-size:12px;color:var(--muted)}
+  #clockbox{text-align:right}
+  #clock{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums}
+  #netline{font-size:12px;color:var(--muted)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:var(--warn);vertical-align:middle}
+  .dot.on{background:var(--in)} .dot.off{background:var(--err)}
+
+  /* face guide */
+  #guide{position:fixed;left:50%;top:44%;width:min(62vw,340px);aspect-ratio:3/4;transform:translate(-50%,-50%);border:3px dashed #ffffff88;border-radius:50%;z-index:2;pointer-events:none;transition:border-color .2s}
+  #guide.busy{border-color:var(--accent);border-style:solid}
+  #guide.ok{border-color:var(--in);border-style:solid}
+
+  /* status + result */
+  #status{position:fixed;left:16px;right:16px;bottom:max(20px,env(safe-area-inset-bottom));z-index:4;text-align:center;font-size:20px;font-weight:700;padding:14px;border-radius:14px;background:#000a;backdrop-filter:blur(6px)}
+  #status.warn{background:#92400ecc}
+  #result{position:fixed;left:16px;right:16px;bottom:max(20px,env(safe-area-inset-bottom));z-index:6;border-radius:20px;padding:22px 20px;text-align:center;box-shadow:0 10px 40px #0008;animation:pop .18s ease-out}
+  #result .big{font-size:34px;font-weight:900;line-height:1.15;word-break:break-word}
+  #result .tag{display:inline-block;margin-top:10px;font-size:26px;font-weight:900;padding:6px 18px;border-radius:999px;background:#fff3}
+  #result .sub{margin-top:8px;font-size:16px;opacity:.9}
+  #result.IN{background:var(--in)} #result.OUT{background:var(--out)} #result.dup{background:var(--warn)} #result.unknown{background:var(--err)}
+  @keyframes pop{from{transform:scale(.92);opacity:0}to{transform:scale(1);opacity:1}}
+
+  /* overlays */
+  .screen{position:fixed;inset:0;z-index:10;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center}
+  .screen h1{margin:0 0 8px;font-size:26px}
+  .screen p{color:var(--muted);margin:6px 0 18px;max-width:420px}
+  .spinner{width:46px;height:46px;border:5px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin-bottom:18px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  button{font:inherit;border:0;border-radius:12px;padding:13px 18px;font-weight:700;cursor:pointer;background:var(--card);color:var(--text)}
+  button.primary{background:var(--accent);color:#111}
+  button.danger{background:transparent;color:#fca5a5;border:1px solid #7f1d1d;padding:7px 12px;font-size:13px}
+  button.big{font-size:20px;padding:18px 28px}
+  button:disabled{opacity:.5}
+
+  /* admin */
+  #admin{position:fixed;inset:0;z-index:12;background:var(--bg);overflow-y:auto;padding:16px;padding-top:max(16px,env(safe-area-inset-top))}
+  #admin .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+  #admin h2{margin:0;font-size:22px}
+  .sec{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+  .sec h3{margin:0 0 12px;font-size:16px;color:var(--accent)}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input{width:100%;font:inherit;font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0b1220;color:var(--text)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .row>button{flex:1}
+  .emp{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .emp:last-child{border-bottom:0}
+  .emp b{display:block}
+  .emp span{font-size:13px;color:var(--muted)}
+  .msg{margin-top:10px;font-size:14px;min-height:18px}
+  .msg.ok{color:#86efac} .msg.err{color:#fca5a5}
+  .kv{display:flex;justify-content:space-between;padding:6px 0;font-size:14px}
+  .kv span:first-child{color:var(--muted)}
+
+  /* register HUD */
+  #reghud{position:fixed;left:16px;right:16px;top:max(90px,calc(env(safe-area-inset-top) + 80px));z-index:7;text-align:center}
+  #regname{font-size:20px;font-weight:800}
+  #regstep{font-size:24px;font-weight:900;margin-top:8px;background:#000a;padding:12px;border-radius:14px}
+  #regbar{height:10px;background:#ffffff33;border-radius:99px;margin-top:10px;overflow:hidden}
+  #regbar i{display:block;height:100%;width:0;background:var(--in);transition:width .2s}
+  #regcancel{margin-top:12px}
+
+  /* pin */
+  #pinbox .pinin{max-width:240px;text-align:center;font-size:28px;letter-spacing:10px}
+</style>
+</head>
+<body>
+
+<video id="video" autoplay muted playsinline></video>
+
+<div id="topbar">
+  <div id="brand">PTI Attendance<small id="devname">Main Door</small></div>
+  <div id="clockbox">
+    <div id="clock">--:--:--</div>
+    <div id="netline"><span id="netdot" class="dot"></span><span id="nettext">Connecting…</span></div>
+  </div>
+</div>
+
+<div id="guide"></div>
+<div id="status">Camera ke saamne aayein</div>
+<div id="result" class="hidden"></div>
+
+<!-- Register HUD -->
+<div id="reghud" class="hidden">
+  <div id="regname"></div>
+  <div id="regstep">Seedha camera mein dekhein</div>
+  <div id="regbar"><i></i></div>
+  <button id="regcancel">Cancel</button>
+</div>
+
+<!-- Loading -->
+<div id="loader" class="screen">
+  <div class="spinner"></div>
+  <h1>System load ho raha hai…</h1>
+  <p id="loadmsg">AI model download ho rahe hain (pehli baar thoda time lagega)</p>
+</div>
+
+<!-- Start (needs a tap for sound, fullscreen, screen-awake) -->
+<div id="start" class="screen hidden">
+  <h1>PTI Face Attendance</h1>
+  <p>Shuru karne ke liye neeche dabayein. Phone charger par laga rahe.</p>
+  <button id="startbtn" class="primary big">▶ Attendance Shuru Karein</button>
+  <p style="margin-top:28px;font-size:13px">Admin panel: upar "PTI Attendance" naam ko 2 second dabaa ke rakhein</p>
+</div>
+
+<!-- PIN -->
+<div id="pinbox" class="screen hidden">
+  <h1>Admin PIN</h1>
+  <p>Admin panel kholne ke liye PIN daalein</p>
+  <input id="pinin" class="pinin" type="password" inputmode="numeric" maxlength="8" autocomplete="off">
+  <div class="row" style="max-width:300px;width:100%">
+    <button id="pincancel">Cancel</button>
+    <button id="pinok" class="primary">Open</button>
+  </div>
+  <div id="pinmsg" class="msg err"></div>
+</div>
+
+<!-- Admin -->
+<div id="admin" class="hidden">
+  <div class="head">
+    <h2>⚙ Admin Panel</h2>
+    <button id="closeadmin" class="primary">Kiosk par wapas</button>
+  </div>
+
+  <div class="sec">
+    <h3>Naya Employee Register</h3>
+    <label>Employee Code *</label>
+    <input id="r_id" placeholder="P001" autocapitalize="characters">
+    <label>Naam *</label>
+    <input id="r_name" placeholder="Ramesh Kumar">
+    <label>Department</label>
+    <input id="r_dept" placeholder="Production">
+    <div class="row"><button id="r_start" class="primary">📷 Face Scan Shuru Karein</button></div>
+    <div id="r_msg" class="msg"></div>
+  </div>
+
+  <div class="sec">
+    <h3>Employees (<span id="empcount">0</span>)</h3>
+    <div class="row" style="margin-top:0;margin-bottom:8px"><button id="emprefresh">↻ Server se refresh</button></div>
+    <div id="emplist"></div>
+  </div>
+
+  <div class="sec">
+    <h3>Status</h3>
+    <div class="kv"><span>Upload pending</span><span id="st_q">0</span></div>
+    <div class="kv"><span>Last sync</span><span id="st_sync">—</span></div>
+    <div class="row"><button id="syncnow">⇪ Abhi sync karein</button></div>
+    <div id="st_msg" class="msg"></div>
+  </div>
+
+  <div class="sec">
+    <h3>Settings</h3>
+    <label>Supabase Project URL * (Settings → API)</label>
+    <input id="s_url" placeholder="https://xxxxxxxx.supabase.co" autocapitalize="off" autocorrect="off">
+    <label>Supabase anon / public key *</label>
+    <input id="s_anon" placeholder="eyJhbGciOi…" autocapitalize="off" autocorrect="off">
+    <label>Kiosk Key * (SQL mein jo kiosk_key rakhi)</label>
+    <input id="s_key" placeholder="PTI-…" autocapitalize="off" autocorrect="off">
+    <label>Device ka naam</label>
+    <input id="s_dev" placeholder="Main Door">
+    <label>Admin PIN</label>
+    <input id="s_pin" type="password" inputmode="numeric" placeholder="1234">
+    <label>Dobara punch ka gap (minute) – iske andar doosra punch ignore</label>
+    <input id="s_cool" type="number" min="1" max="120">
+    <label>Match strictness (0.40 = zyada sakht, 0.55 = narm) – default 0.50</label>
+    <input id="s_thr" type="number" step="0.01" min="0.35" max="0.65">
+    <div class="row">
+      <button id="s_test">Connection test</button>
+      <button id="s_save" class="primary">Save</button>
+    </div>
+    <div id="s_msg" class="msg"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
+<script>
+/* =====================================================================
+   PTI FACE ATTENDANCE – Kiosk Web App
+   - Face pehchaan phone par hi hoti hai (fast, ~1 sec)
+   - Entry pehle phone ki queue mein, phir background mein Google Sheet/Drive
+   - Internet band ho to entries save rehti hain, net aate hi upload
+   ===================================================================== */
+const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model/';
+const LS = { settings: 'pti_settings', emps: 'pti_emps', state: 'pti_state', lastSync: 'pti_lastsync' };
+const BUCKET = 'attendance-photos';
+// Supabase project URL + anon (public) key – ye public hote hain, browser app mein rakhna normal hai.
+// Asli suraksha "kiosk key" se hai, jo sirf phone ke Settings mein daali jaati hai.
+const DEFAULTS = {
+  sbUrl: 'https://owaikaqadmxyoeedtgoc.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im93YWlrYXFhZG14eW9lZWR0Z29jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyMDQ5MjIsImV4cCI6MjEwNzc4MDkyMn0.v4wQc9O0P4e-3XnE-j2HQGIzb4Il94e95odN_YYv69I',
+  kioskKey: '', pin: '1234', device: 'Main Door', cooldownMin: 5, threshold: 0.5, minFace: 0.18 };
+const REG_SAMPLES = 5;
+const REG_STEPS = ['Seedha camera mein dekhein', 'Sar thoda BAAYEIN ghumayein', 'Sar thoda DAAYEIN ghumayein', 'Thoda UPAR dekhein', 'Seedha dekhein, halki muskaan'];
+
+const $ = id => document.getElementById(id);
+const video = $('video');
+
+function loadJSON(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { console.warn('storage', e); } }
+
+let S = Object.assign({}, DEFAULTS, loadJSON(LS.settings, {}));
+let EMPS = loadJSON(LS.emps, []);          // [{id,name,dept,d:[[128]...]}]
+let STATE = loadJSON(LS.state, {});        // empId -> {type, ts}
+let matcher = null, empMap = {};
+let mode = 'loading';                      // loading | start | kiosk | admin | register
+let detKiosk, detReg;
+
+/* ------------------------- helpers ------------------------- */
+const pad = n => String(n).padStart(2, '0');
+const dayKey = ts => { const d = new Date(ts); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); };
+const fmtTime = ts => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()); };
+const fmtDT = ts => { const d = new Date(ts); return pad(d.getDate()) + '-' + pad(d.getMonth() + 1) + '-' + d.getFullYear() + ' ' + fmtTime(ts); };
+const rand = () => Math.random().toString(36).slice(2, 8);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function show(id) { $(id).classList.remove('hidden'); }
+function hide(id) { $(id).classList.add('hidden'); }
+function msg(id, text, cls) { const el = $(id); el.textContent = text || ''; el.className = 'msg ' + (cls || ''); }
+
+/* ------------------------- offline queue (IndexedDB) ------------------------- */
+const Q = {
+  db: null, mem: [],
+  async open() {
+    try {
+      this.db = await new Promise((res, rej) => {
+        const r = indexedDB.open('pti_attendance', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('queue', { keyPath: 'id' });
+        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+      });
+    } catch (e) { console.warn('IndexedDB nahi chala, memory queue use hogi', e); this.db = null; }
+  },
+  store(m) { return this.db.transaction('queue', m).objectStore('queue'); },
+  add(item) {
+    if (!this.db) { this.mem.push(item); return Promise.resolve(); }
+    return new Promise((res, rej) => { const r = this.store('readwrite').put(item); r.onsuccess = () => res(); r.onerror = () => rej(r.error); });
+  },
+  getSome(n) {
+    if (!this.db) return Promise.resolve(this.mem.slice(0, n));
+    return new Promise((res, rej) => {
+      const out = []; const r = this.store('readonly').openCursor();
+      r.onsuccess = () => { const c = r.result; if (c && out.length < n) { out.push(c.value); c.continue(); } else res(out); };
+      r.onerror = () => rej(r.error);
+    });
+  },
+  del(ids) {
+    if (!this.db) { this.mem = this.mem.filter(x => !ids.includes(x.id)); return Promise.resolve(); }
+    return new Promise((res, rej) => {
+      const t = this.db.transaction('queue', 'readwrite'); const s = t.objectStore('queue');
+      ids.forEach(id => s.delete(id)); t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+    });
+  },
+  count() {
+    if (!this.db) return Promise.resolve(this.mem.length);
+    return new Promise(res => { const r = this.store('readonly').count(); r.onsuccess = () => res(r.result); r.onerror = () => res(0); });
+  }
+};
+
+/* ------------------------- server API (Supabase) ------------------------- */
+const configured = () => !!(S.sbUrl && S.anonKey && S.kioskKey);
+function sbHeaders(extra) {
+  return Object.assign({ apikey: S.anonKey, Authorization: 'Bearer ' + S.anonKey }, extra || {});
+}
+async function rpc(fn, args) {
+  const r = await fetch(S.sbUrl + '/rest/v1/rpc/' + fn, {
+    method: 'POST', cache: 'no-store',
+    headers: sbHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(Object.assign({ p_key: S.kioskKey }, args || {}))
+  });
+  const t = await r.text();
+  let j = null; try { j = JSON.parse(t); } catch (e) {}
+  if (!r.ok) throw new Error((j && (j.message || j.error || j.hint)) || ('Server error ' + r.status));
+  if (!j || !j.ok) throw new Error('Server ka jawab galat hai');
+  return j;
+}
+async function uploadPhoto(path, dataUrl) {
+  const blob = await (await fetch(dataUrl)).blob();
+  const r = await fetch(S.sbUrl + '/storage/v1/object/' + BUCKET + '/' + path, {
+    method: 'POST', headers: sbHeaders({ 'Content-Type': 'image/jpeg', 'x-upsert': 'false' }), body: blob
+  });
+  if (r.ok) return;
+  const t = await r.text();
+  if (/duplicate|already exists/i.test(t)) return;   // retry mein pehle hi upload ho chuki
+  throw new Error('Photo upload: ' + t.slice(0, 120));
+}
+
+/* ------------------------- face matcher ------------------------- */
+function buildMatcher() {
+  empMap = {};
+  const labeled = [];
+  EMPS.forEach(e => {
+    empMap[e.id] = e;
+    if (e.d && e.d.length) labeled.push(new faceapi.LabeledFaceDescriptors(String(e.id), e.d.map(a => new Float32Array(a))));
+  });
+  matcher = labeled.length ? new faceapi.FaceMatcher(labeled, Number(S.threshold) || 0.5) : null;
+  $('empcount').textContent = EMPS.length;
+}
+
+async function syncEmployees() {
+  if (!configured()) return false;
+  try {
+    const j = await rpc('att_get_employees');
+    EMPS = j.employees || [];
+    saveJSON(LS.emps, EMPS);
+    buildMatcher();
+    Object.entries(j.today || {}).forEach(([id, st]) => {
+      const cur = STATE[id];
+      if (!cur || st.ts > cur.ts) STATE[id] = st;
+    });
+    saveJSON(LS.state, STATE);
+    setNet(true);
+    return true;
+  } catch (e) { console.warn('syncEmployees', e); setNet(false, e.message); return false; }
+}
+
+/* ------------------------- upload queue sync ------------------------- */
+let syncing = false, nextTry = 0, failCount = 0;
+async function syncQueue(force) {
+  if (syncing || !configured()) return;
+  if (!force && Date.now() < nextTry) return;
+  syncing = true;
+  try {
+    while (true) {
+      const items = await Q.getSome(4);
+      if (!items.length) break;
+      // 1) pehle photos Storage mein
+      for (const it of items) {
+        if (!it.photo) continue;
+        try {
+          await uploadPhoto(it.photoPath, it.photo);
+        } catch (err) {
+          if (!navigator.onLine) throw err;
+          it.photoFails = (it.photoFails || 0) + 1;
+          if (it.photoFails < 5) { await Q.add(it); throw err; }
+          it.photoPath = '';                 // 5 baar fail – entry bina photo ke chali jaye, ruke nahi
+        }
+        delete it.photo;
+        await Q.add(it);                     // photo upload ho gayi, queue se photo hata do
+      }
+      // 2) phir entries database mein (ek call mein)
+      const rows = items.map(it => ({
+        id: it.id, empId: it.empId, name: it.name, dept: it.dept, type: it.type,
+        ts: it.ts, score: it.score, device: it.device, photoPath: it.photoPath || ''
+      }));
+      const j = await rpc('att_punch', { p_punches: rows });
+      await Q.del(j.accepted && j.accepted.length ? j.accepted : items.map(i => i.id));
+      failCount = 0;
+      const now = Date.now(); saveJSON(LS.lastSync, now);
+      setNet(true);
+      updateQueueBadge();
+    }
+  } catch (e) {
+    failCount++;
+    nextTry = Date.now() + Math.min(60000, 3000 * failCount);
+    setNet(false, 'Upload ruka – retry hoga');
+  } finally {
+    syncing = false;
+    updateQueueBadge();
+  }
+}
+async function updateQueueBadge() {
+  const n = await Q.count();
+  $('st_q').textContent = n;
+  const ls = loadJSON(LS.lastSync, 0);
+  $('st_sync').textContent = ls ? fmtDT(ls) : '—';
+  if (n > 0) $('nettext').textContent = (navigator.onLine ? 'Upload: ' : 'Offline – pending: ') + n;
+  else if ($('netdot').classList.contains('on')) $('nettext').textContent = 'Online';
+}
+function setNet(ok, text) {
+  $('netdot').className = 'dot ' + (ok ? 'on' : 'off');
+  $('nettext').textContent = ok ? 'Online' : (text || 'Offline');
+}
+
+/* ------------------------- sound ------------------------- */
+let actx = null;
+function beep(kind) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const seq = { IN: [880, 1320], OUT: [1320, 880], dup: [660], unknown: [240, 240], reg: [1000] }[kind] || [880];
+    let t = actx.currentTime;
+    seq.forEach(f => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      o.connect(g).connect(actx.destination); o.start(t); o.stop(t + 0.16); t += 0.17;
+    });
+  } catch (e) {}
+}
+
+/* ------------------------- UI: status/result ------------------------- */
+let resultTimer = null;
+function setStatus(kind, text) {
+  const el = $('status');
+  if (el.textContent !== text) el.textContent = text;
+  el.className = kind === 'warn' ? 'warn' : '';
+  $('guide').className = kind === 'busy' ? 'busy' : '';
+}
+function showResult(kind, emp, info, ms) {
+  const el = $('result');
+  let html = '';
+  if (kind === 'unknown') {
+    html = '<div class="big">Pehchaan nahi hua</div><div class="sub">Seedha camera mein dekhein, ya admin se register karwayein</div>';
+    el.className = 'unknown';
+  } else if (kind === 'dup') {
+    html = '<div class="big">' + esc(emp.name) + '</div><div class="tag">Already ' + esc(info.type) + '</div>' +
+           '<div class="sub">' + esc(info.type) + ' pehle hi lag chuka hai – ' + fmtTime(info.ts) + '</div>';
+    el.className = 'dup';
+  } else {
+    html = '<div class="big">' + esc(emp.name) + '</div><div class="tag">' + info.type + ' &nbsp;•&nbsp; ' + fmtTime(info.ts) + '</div>' +
+           '<div class="sub">' + esc(emp.id) + (emp.dept ? ' • ' + esc(emp.dept) : '') + '</div>';
+    el.className = info.type;
+  }
+  el.innerHTML = html;
+  $('guide').className = kind === 'ok' ? 'ok' : '';
+  hide('status');
+  clearTimeout(resultTimer);
+  resultTimer = setTimeout(() => { hide('result'); show('status'); $('guide').className = ''; }, ms || 2200);
+}
+
+/* ------------------------- punch logic ------------------------- */
+function decide(empId, now) {
+  const st = STATE[empId];
+  if (st && dayKey(st.ts) === dayKey(now)) {
+    if ((now - st.ts) / 60000 < Number(S.cooldownMin || 5)) return { skip: true, last: st };
+    return { type: st.type === 'IN' ? 'OUT' : 'IN' };
+  }
+  return { type: 'IN' };
+}
+
+function snap(ts, emp, type) {
+  const W = 480;
+  const H = Math.round(W * (video.videoHeight || 480) / (video.videoWidth || 640));
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.drawImage(video, 0, 0, W, H);
+  g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(0, H - 30, W, 30);
+  g.fillStyle = '#fff'; g.font = 'bold 14px sans-serif';
+  g.fillText(emp.id + ' ' + emp.name + ' | ' + type + ' | ' + fmtDT(ts) + ' | ' + S.device, 8, H - 10);
+  return c.toDataURL('image/jpeg', 0.6);
+}
+
+let holdUntil = 0;
+async function doPunch(empId, dist, now) {
+  const emp = empMap[empId]; if (!emp) return;
+  const d = decide(empId, now);
+  if (d.skip) { showResult('dup', emp, d.last, 2500); beep('dup'); holdUntil = now + 2600; return; }
+
+  STATE[empId] = { type: d.type, ts: now };
+  saveJSON(LS.state, STATE);
+  showResult('ok', emp, { type: d.type, ts: now });
+  beep(d.type);
+  holdUntil = now + 2300;
+
+  const photo = snap(now, emp, d.type);
+  const r6 = rand();
+  const safeId = String(emp.id).replace(/[^A-Za-z0-9_-]/g, '');
+  await Q.add({
+    id: now + '-' + r6, empId: emp.id, name: emp.name, dept: emp.dept || '',
+    type: d.type, ts: now, score: +(1 - dist).toFixed(3), device: S.device, photo: photo,
+    photoPath: dayKey(now) + '/' + safeId + '_' + d.type + '_' + fmtTime(now).replace(/:/g, '') + '_' + r6 + '.jpg'
+  });
+  updateQueueBadge();
+  syncQueue(true);
+}
+
+/* ------------------------- detection loop ------------------------- */
+let lastLabel = null, hits = 0, unknownSince = 0;
+
+function handleKiosk(res) {
+  const now = Date.now();
+  if (now < holdUntil) return;
+  if (!res) { lastLabel = null; hits = 0; unknownSince = 0; setStatus('idle', 'Camera ke saamne aayein'); return; }
+
+  const rel = res.detection.box.width / (video.videoWidth || 640);
+  if (rel < S.minFace) { hits = 0; setStatus('idle', 'Thoda paas aayein'); return; }
+  if (!matcher) { setStatus('warn', 'Abhi koi employee registered nahi hai'); return; }
+
+  const m = matcher.findBestMatch(res.descriptor);
+  if (m.label === 'unknown') {
+    hits = 0; lastLabel = null;
+    if (!unknownSince) unknownSince = now;
+    if (now - unknownSince > 1800) { showResult('unknown', null, null, 2000); beep('unknown'); holdUntil = now + 2100; unknownSince = 0; }
+    else setStatus('busy', 'Pehchaan rahe hain…');
+    return;
+  }
+  unknownSince = 0;
+  if (m.label === lastLabel) hits++; else { lastLabel = m.label; hits = 1; }
+  if (hits < 2) { setStatus('busy', 'Pehchaan rahe hain…'); return; }   // 2 frames confirm = galat match kam
+  hits = 0; lastLabel = null;
+  doPunch(m.label, m.distance, now);
+}
+
+async function tick() {
+  if ((mode !== 'kiosk' && mode !== 'register') || video.readyState < 2) { setTimeout(tick, 250); return; }
+  try {
+    const opts = mode === 'register' ? detReg : detKiosk;
+    const res = await faceapi.detectSingleFace(video, opts).withFaceLandmarks(true).withFaceDescriptor();
+    if (mode === 'register') await handleRegister(res);
+    else if (mode === 'kiosk') handleKiosk(res);
+  } catch (e) { console.warn('tick', e); }
+  setTimeout(tick, 40);
+}
+
+/* ------------------------- registration ------------------------- */
+let reg = null;
+function startRegister() {
+  const id = $('r_id').value.trim().toUpperCase();
+  const name = $('r_name').value.trim();
+  const dept = $('r_dept').value.trim();
+  if (!id || !name) { msg('r_msg', 'Employee Code aur Naam dono zaroori hain', 'err'); return; }
+  if (!configured()) { msg('r_msg', 'Pehle neeche Settings mein Supabase details save karein', 'err'); return; }
+  reg = { id, name, dept, samples: [], last: 0 };
+  hide('admin'); show('reghud'); hide('status'); hide('result');
+  $('regname').textContent = id + ' – ' + name;
+  $('regstep').textContent = REG_STEPS[0];
+  $('regbar').firstElementChild.style.width = '0%';
+  mode = 'register';
+}
+function cancelRegister(text, cls) {
+  reg = null; mode = 'admin';
+  hide('reghud'); show('status'); show('admin');
+  if (text) msg('r_msg', text, cls);
+}
+async function handleRegister(res) {
+  if (!reg || reg.saving) return;
+  const now = Date.now();
+  if (!res) { $('regstep').textContent = 'Chehra nahi dikh raha – oval ke andar aayein'; return; }
+  const rel = res.detection.box.width / (video.videoWidth || 640);
+  if (rel < 0.2) { $('regstep').textContent = 'Thoda paas aayein'; return; }
+  if (res.detection.score < 0.6) { $('regstep').textContent = 'Roshni ki taraf mooh karein'; return; }
+  if (now - reg.last < 700) return;
+
+  reg.samples.push(Array.from(res.descriptor).map(v => +v.toFixed(4)));
+  reg.last = now;
+  beep('reg');
+  const n = reg.samples.length;
+  $('regbar').firstElementChild.style.width = (n / REG_SAMPLES * 100) + '%';
+  if (n < REG_SAMPLES) { $('regstep').textContent = REG_STEPS[n]; return; }
+
+  // ---- samples poore, ab save ----
+  reg.saving = true;
+  $('regstep').textContent = 'Save ho raha hai…';
+
+  if (matcher) {
+    const m = matcher.findBestMatch(new Float32Array(reg.samples[0]));
+    if (m.label !== 'unknown' && m.label !== reg.id && m.distance < 0.45) {
+      const other = empMap[m.label];
+      const go = confirm('Ye chehra pehle se "' + (other ? other.id + ' – ' + other.name : m.label) +
+                         '" ke naam se registered lagta hai.\n\nFir bhi ' + reg.id + ' ke naam se save karein?');
+      if (!go) { cancelRegister('Registration cancel kiya', 'err'); return; }
+    }
+  }
+
+  const emp = { id: reg.id, name: reg.name, dept: reg.dept, d: reg.samples };
+  try {
+    await rpc('att_register', { p_emp: emp });
+    EMPS = EMPS.filter(e => e.id !== emp.id).concat([emp]);
+    saveJSON(LS.emps, EMPS);
+    buildMatcher(); renderEmployees();
+    $('r_id').value = ''; $('r_name').value = ''; $('r_dept').value = '';
+    cancelRegister('✓ ' + emp.id + ' – ' + emp.name + ' register ho gaya', 'ok');
+  } catch (e) {
+    cancelRegister('Save nahi hua: ' + e.message + ' (internet check karke dobara try karein)', 'err');
+  }
+}
+
+/* ------------------------- admin ------------------------- */
+function renderEmployees() {
+  const list = $('emplist');
+  if (!EMPS.length) { list.innerHTML = '<div style="color:var(--muted);font-size:14px">Abhi koi employee nahi</div>'; return; }
+  list.innerHTML = EMPS.slice().sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })).map(e =>
+    '<div class="emp"><div><b>' + esc(e.id) + ' – ' + esc(e.name) + '</b><span>' + esc(e.dept || '—') +
+    ' • ' + (e.d ? e.d.length : 0) + ' samples</span></div>' +
+    '<button class="danger" data-del="' + esc(e.id) + '">Hatao</button></div>').join('');
+}
+function fillSettings() {
+  $('s_url').value = S.sbUrl; $('s_anon').value = S.anonKey; $('s_key').value = S.kioskKey; $('s_dev').value = S.device;
+  $('s_pin').value = ''; $('s_cool').value = S.cooldownMin; $('s_thr').value = S.threshold;
+}
+function openAdmin() {
+  mode = 'admin';
+  hide('pinbox'); hide('start'); hide('result');
+  fillSettings(); renderEmployees(); updateQueueBadge();
+  show('admin');
+}
+function closeAdmin() {
+  if (!configured()) { msg('s_msg', 'Pehle Supabase URL, anon key aur kiosk key save karein', 'err'); return; }
+  hide('admin'); show('status'); setStatus('idle', 'Camera ke saamne aayein');
+  mode = 'kiosk';
+}
+function askPin() {
+  if (mode === 'register') return;
+  mode = 'pin'; $('pinin').value = ''; msg('pinmsg', '');
+  show('pinbox'); setTimeout(() => $('pinin').focus(), 100);
+}
+
+/* ------------------------- camera / wake lock ------------------------- */
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+  });
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+}
+let wakeLock = null;
+async function keepAwake() {
+  try { if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); } } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { keepAwake(); syncQueue(true); }
+});
+
+/* ------------------------- events ------------------------- */
+function bindEvents() {
+  $('startbtn').onclick = async () => {
+    beep('reg');
+    try { await document.documentElement.requestFullscreen(); } catch (e) {}
+    keepAwake();
+    hide('start');
+    if (!configured()) { openAdmin(); msg('s_msg', 'Pehli baar: Supabase URL, anon key aur kiosk key daal ke Save karein', 'err'); }
+    else { mode = 'kiosk'; show('status'); }
+  };
+
+  // Admin: brand ko 2 sec dabaa ke rakho
+  let pressT = null;
+  const brand = $('brand');
+  const startPress = () => { pressT = setTimeout(askPin, 2000); };
+  const endPress = () => clearTimeout(pressT);
+  brand.addEventListener('touchstart', startPress, { passive: true });
+  brand.addEventListener('touchend', endPress);
+  brand.addEventListener('mousedown', startPress);
+  brand.addEventListener('mouseup', endPress);
+  brand.addEventListener('mouseleave', endPress);
+
+  $('pinok').onclick = () => {
+    if ($('pinin').value === String(S.pin)) openAdmin();
+    else msg('pinmsg', 'Galat PIN', 'err');
+  };
+  $('pinin').addEventListener('keydown', e => { if (e.key === 'Enter') $('pinok').click(); });
+  $('pincancel').onclick = () => { hide('pinbox'); mode = 'kiosk'; };
+
+  $('closeadmin').onclick = closeAdmin;
+  $('r_start').onclick = startRegister;
+  $('regcancel').onclick = () => cancelRegister('Registration cancel kiya', 'err');
+
+  $('emprefresh').onclick = async () => {
+    msg('st_msg', 'Refresh ho raha hai…');
+    const ok = await syncEmployees(); renderEmployees();
+    msg('st_msg', ok ? '✓ ' + EMPS.length + ' employees load hue' : 'Server se connect nahi hua', ok ? 'ok' : 'err');
+  };
+  $('emplist').onclick = async e => {
+    const id = e.target.getAttribute && e.target.getAttribute('data-del');
+    if (!id) return;
+    if (!confirm(id + ' ko attendance se hatana hai? (Sheet mein Active = No ho jayega)')) return;
+    try {
+      await rpc('att_deactivate', { p_emp_id: id });
+      EMPS = EMPS.filter(x => x.id !== id); saveJSON(LS.emps, EMPS);
+      buildMatcher(); renderEmployees();
+    } catch (err) { alert('Nahi hua: ' + err.message); }
+  };
+
+  $('syncnow').onclick = async () => {
+    msg('st_msg', 'Sync ho raha hai…');
+    await syncQueue(true);
+    const n = await Q.count();
+    msg('st_msg', n ? n + ' entries abhi bhi pending – internet check karein' : '✓ Sab upload ho gaya', n ? 'err' : 'ok');
+  };
+
+  $('s_save').onclick = async () => {
+    const url = $('s_url').value.trim().replace(/\/+$/, ''), anon = $('s_anon').value.trim(), key = $('s_key').value.trim();
+    if (!/^https:\/\/[^\s/]+$/.test(url)) { msg('s_msg', 'URL galat lag raha hai – "https://xxxx.supabase.co" jaisa daalein', 'err'); return; }
+    if (!anon) { msg('s_msg', 'Supabase anon key daalein', 'err'); return; }
+    if (!key) { msg('s_msg', 'Kiosk key daalein', 'err'); return; }
+    S.sbUrl = url; S.anonKey = anon; S.kioskKey = key;
+    S.device = $('s_dev').value.trim() || 'Main Door';
+    if ($('s_pin').value.trim()) S.pin = $('s_pin').value.trim();
+    S.cooldownMin = Math.max(1, Number($('s_cool').value) || 5);
+    S.threshold = Math.min(0.65, Math.max(0.35, Number($('s_thr').value) || 0.5));
+    saveJSON(LS.settings, S);
+    $('devname').textContent = S.device;
+    msg('s_msg', 'Saved. Server check ho raha hai…');
+    const ok = await syncEmployees(); buildMatcher(); renderEmployees();
+    msg('s_msg', ok ? '✓ Saved aur Supabase connected (' + EMPS.length + ' employees)' : 'Saved, lekin connect nahi hua – URL/keys check karein', ok ? 'ok' : 'err');
+  };
+  $('s_test').onclick = async () => {
+    const old = { u: S.sbUrl, a: S.anonKey, k: S.kioskKey };
+    S.sbUrl = $('s_url').value.trim().replace(/\/+$/, ''); S.anonKey = $('s_anon').value.trim(); S.kioskKey = $('s_key').value.trim();
+    msg('s_msg', 'Test ho raha hai…');
+    try { const j = await rpc('att_ping'); msg('s_msg', '✓ Connected – server time ' + j.time, 'ok'); }
+    catch (e) { msg('s_msg', '✗ ' + e.message, 'err'); }
+    S.sbUrl = old.u; S.anonKey = old.a; S.kioskKey = old.k;
+  };
+
+  window.addEventListener('online', () => syncQueue(true));
+  window.addEventListener('offline', () => setNet(false, 'Offline'));
+}
+
+/* ------------------------- clock ------------------------- */
+setInterval(() => { $('clock').textContent = fmtTime(Date.now()); }, 1000);
+
+/* ------------------------- boot ------------------------- */
+(async function boot() {
+  bindEvents();
+  $('devname').textContent = S.device;
+  $('clock').textContent = fmtTime(Date.now());
+  await Q.open();
+
+  try {
+    $('loadmsg').textContent = 'Camera chalu ho raha hai…';
+    const cam = startCamera();
+    $('loadmsg').textContent = 'AI model download ho rahe hain (pehli baar thoda time lagega)…';
+    try { await faceapi.tf.setBackend('webgl'); } catch (e) {}
+    await faceapi.tf.ready();
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+    ]);
+    detKiosk = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+    detReg = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+    await cam;
+  } catch (e) {
+    $('loadmsg').innerHTML = '<b style="color:#fca5a5">Start nahi hua:</b> ' + esc(e.message || e) +
+      '<br><br>Check karein: camera permission Allow ho, internet chalu ho, aur page https:// link se khula ho.';
+    document.querySelector('#loader .spinner').style.display = 'none';
+    return;
+  }
+
+  buildMatcher();                 // pehle phone mein saved data se (offline bhi chalega)
+  syncEmployees();                // phir server se latest
+  setInterval(syncEmployees, 30 * 60 * 1000);
+  setInterval(() => syncQueue(false), 3000);
+  updateQueueBadge();
+
+  hide('loader'); show('start'); mode = 'start';
+  tick();
+})();
+</script>
+</body>
+</html>
