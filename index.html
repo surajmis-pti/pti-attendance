@@ -102,6 +102,7 @@
   .emp .meta{font-size:13px;color:var(--muted);margin-top:4px;line-height:1.5}
   .emp .acts{display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
   .emp.off{opacity:.55}
+  @media (max-width:560px){ .emp .top{flex-direction:column} .emp .acts{justify-content:flex-start} }
   .badge{font-size:12px;font-weight:800;padding:3px 8px;border-radius:99px;white-space:nowrap}
   .badge.IN,.badge.act{background:#14532d;color:#86efac} .badge.OUT{background:#1e3a8a;color:#93c5fd} .badge.deact{background:#3f1d1d;color:#fca5a5}
   .badge.warn{background:#78350f;color:#fcd34d}
@@ -301,6 +302,7 @@
         <button id="ef_cancel" class="ghost">Cancel</button>
         <button id="ef_save" class="primary">Save</button>
       </div>
+      <div class="row"><button id="ef_del" class="danger hidden">🗑 Is employee ko Delete karo</button></div>
       <div class="row"><button id="ef_scan">📷 Face scan karke Save</button></div>
       <div id="ef_msg" class="msg"></div>
     </div>
@@ -835,6 +837,7 @@ function openForm(emp) {
     ? ('Face data: ' + emp.faces + ' samples saved.' + (emp.photo ? '' : ' Registration photo nahi hai – "Face dobara scan" se photo bhi aa jayegi.'))
     : 'Naye employee ka face scan zaroori hai. Scan ke time photo bhi save hogi.';
   $('ef_save').classList.toggle('hidden', !emp);
+  $('ef_del').classList.toggle('hidden', !emp);
   $('ef_scan').textContent = emp ? '📷 Face dobara scan karke Save' : '📷 Face scan karke Save';
   msg('ef_msg', '');
   show('empform'); $('empform').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -959,7 +962,8 @@ function renderEmployees() {
       '<br>⏰ ' + esc(e.shift_in || '--') + ' – ' + esc(e.shift_out || '--') + ' • Off: ' + esc(e.weekly_off || '--') +
       (e.joining ? ' • Joining: ' + esc(dmy(e.joining)) : '') + '</div></div>' +
     '<div class="acts"><button class="small ghost" data-edit="' + esc(e.id) + '">Edit</button>' +
-      '<button class="small ' + (e.active ? 'danger' : 'okb') + '" data-act="' + esc(e.id) + '">' + (e.active ? 'De-active' : 'Active') + '</button></div>' +
+      '<button class="small ' + (e.active ? 'danger' : 'okb') + '" data-act="' + esc(e.id) + '">' + (e.active ? 'De-active' : 'Active') + '</button>' +
+      '<button class="small danger" data-delemp="' + esc(e.id) + '" title="Employee delete karo">🗑 Delete</button></div>' +
     '</div></div></div>').join('');
 }
 function renderDepts() {
@@ -975,6 +979,23 @@ function exportEmployees() {
     ['Employee Code', 'Name (ID proof)', 'Nickname', 'Department', 'Phone No', 'Email', 'Joining Date', 'Gender', 'In Time', 'Out Time', 'Weekly Off', 'Status', 'Face Samples', 'Registered On', 'Photo'],
     ADM.map(e => [e.id, e.name, e.nick, e.dept, e.phone, e.email, dmy(e.joining), e.gender, e.shift_in, e.shift_out, e.weekly_off,
       e.active ? 'Active' : 'De-active', e.faces, e.registered, e.photo || '']));
+}
+
+async function deleteEmployee(emp, btn) {
+  if (!emp) return;
+  const typed = prompt('⚠ ' + emp.id + ' – ' + emp.name + ' ko DELETE karna hai?\n\n' +
+    '• Agar iska koi punch nahi laga (galti se register hua) to ye poora hat jayega.\n' +
+    '• Agar punch lag chuke hain to ye employee aur iske saare punch app, report aur Google Sheet se hat jayenge. Code ' + emp.id + ' kisi aur ko nahi diya ja sakega.\n\n' +
+    'Sirf chhutti/chhod gaya ho to Delete mat karo, "De-active" karo – usse purana record dikhta rahega.\n\n' +
+    'Pakka karne ke liye neeche code likho: ' + emp.id, '');
+  if (typed === null) return;
+  if (typed.trim().toUpperCase() !== emp.id) { msg('emp_msg', 'Code match nahi hua – delete nahi kiya', 'err'); return; }
+  if (btn) btn.disabled = true;
+  try {
+    const j = await adminRpc('att_delete_employee', { p_emp_id: emp.id, p_reason: 'Admin panel se delete' });
+    closeForm(); await loadAdminEmployees(true); syncEmployees(); syncToday();
+    msg('emp_msg', '✓ ' + emp.id + ' – ' + emp.name + ' delete ho gaya' + (j.mode === 'hidden' ? ' (' + j.punches + ' punch bhi hata diye)' : ''), 'ok');
+  } catch (e) { msg('emp_msg', 'Delete nahi hua: ' + e.message, 'err'); if (btn) btn.disabled = false; }
 }
 
 /* ---------- admin: manual / bulk punch ---------- */
@@ -1295,6 +1316,8 @@ function bindEvents() {
     const t = e.target;
     const eid = t.getAttribute && t.getAttribute('data-edit');
     if (eid) { openForm(ADM.find(x => x.id === eid)); return; }
+    const did = t.getAttribute && t.getAttribute('data-delemp');
+    if (did) { deleteEmployee(ADM.find(x => x.id === did), t); return; }
     const aid = t.getAttribute && t.getAttribute('data-act');
     if (!aid) return;
     const emp = ADM.find(x => x.id === aid);
@@ -1316,6 +1339,7 @@ function bindEvents() {
     catch (e) { msg('ef_msg', 'Department nahi bana: ' + e.message, 'err'); }
   };
   $('ef_cancel').onclick = closeForm;
+  $('ef_del').onclick = () => { if (editing) deleteEmployee(editing, $('ef_del')); };
   $('ef_save').onclick = () => { const f = readForm(); if (f) saveEmployee(f); };
   $('ef_scan').onclick = () => { const f = readForm(); if (f) startScan(f); };
   $('regcancel').onclick = () => { endScan(); msg('ef_msg', 'Face scan cancel kiya', 'err'); };
