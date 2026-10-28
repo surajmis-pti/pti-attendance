@@ -83,6 +83,15 @@
   .seg{display:flex;gap:6px}
   .seg button{flex:1}
   .seg button.on.IN{background:var(--in);color:#fff} .seg button.on.OUT{background:var(--out);color:#fff}
+  .seg button.on:not(.IN):not(.OUT){background:var(--accent);color:#111}
+  .mr{display:grid;grid-template-columns:2.2fr 0.9fr 1.3fr 1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+  .mr input,.mr select{padding:10px;font-size:15px}
+  .mr select.IN{background:#14532d;color:#fff} .mr select.OUT{background:#1e3a8a;color:#fff}
+  .mr .res{grid-column:1/-1;font-size:13px;color:#fca5a5}
+  .mr .res.ok{color:#86efac}
+  .mr .x{padding:8px 12px}
+  .mr>*{min-width:0}
+  @media (max-width:640px){ .mr{grid-template-columns:minmax(0,.8fr) minmax(0,1.35fr) minmax(0,1fr) auto;gap:6px} .mr .emp-in{grid-column:1/-1} .mr input,.mr select{padding:9px 6px;font-size:14px} }
 
   .emp{padding:12px 0;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:flex-start}
   .emp:last-child{border-bottom:0}
@@ -223,7 +232,25 @@
 
   <!-- MANUAL / BULK -->
   <div id="t_manual" class="tab hidden">
-    <div class="sec">
+    <div class="seg" style="margin-bottom:12px"><button id="mm_rows" class="on">📝 Alag-alag time (row wise)</button><button id="mm_same">👥 Sabka ek hi time</button></div>
+
+    <div id="mp_rowsec" class="sec">
+      <h3>Row wise manual entry</h3>
+      <div class="hint" style="margin-top:0">Har row mein employee, IN/OUT, date aur time bharo. Ek hi employee ki kai rows (alag din ya IN + OUT) bhi chalengi. "+ Row jodo" se nayi row aati hai, phir neeche button se sab ek saath lag jayengi.</div>
+      <datalist id="mr_emps"></datalist>
+      <div id="mr_list" style="margin-top:10px"></div>
+      <div class="row">
+        <button id="mr_add">+ Row jodo</button>
+        <button id="mr_clear" class="ghost">Sab rows hatao</button>
+      </div>
+      <label>Wajah / Note (sab rows ke liye)</label>
+      <input id="mr_note" placeholder="Jaise: phone band tha, bahar duty par the">
+      <div class="row"><button id="mr_go" class="primary">✓ Sab rows ka punch lagao</button></div>
+      <div class="hint">Us din ka pehle se laga IN (ya OUT) ho to naye time se badal jayega. Jo row lag jayegi wo list se hat jayegi; jo nahi lagi uske saath wajah dikhegi.</div>
+      <div id="mr_msg" class="msg"></div>
+    </div>
+
+    <div id="mp_samesec" class="sec hidden">
       <h3>Manual IN / OUT (ek ya bahut saare log ek saath)</h3>
       <div class="grid2">
         <div><label style="margin-top:0">Date <span class="req">*</span></label><input id="mp_date" type="date"></div>
@@ -909,7 +936,7 @@ async function loadAdminEmployees(quiet) {
   try {
     const j = await adminRpc('att_admin_employees');
     ADM = j.employees || []; ADEPTS = j.departments || [];
-    fillDeptSelects(); renderEmployees(); renderDepts(); renderManualList();
+    fillDeptSelects(); renderEmployees(); renderDepts(); renderManualList(); mrFillList();
     if (!quiet) msg('emp_msg', '');
   } catch (e) { msg('emp_msg', 'Employees nahi aaye: ' + e.message, 'err'); }
 }
@@ -977,6 +1004,75 @@ function bulkResultText(j, type) {
   return t;
 }
 
+/* ---------- admin: manual row-wise (har row ka apna time) ---------- */
+let MR = [], mrSeq = 0;
+function mrEmpLabel(e) { return e.id + ' – ' + e.name; }
+function mrFillList() {
+  $('mr_emps').innerHTML = ADM.filter(e => e.active).map(e => '<option value="' + esc(mrEmpLabel(e)) + '">').join('');
+}
+function mrAdd(copy) {
+  const last = MR[MR.length - 1];
+  const r = { k: ++mrSeq, emp: '', type: last ? last.type : 'IN', date: last ? last.date : ymd(new Date()), time: last ? last.time : fmtHM(Date.now()), res: '', ok: false };
+  if (copy && last) r.emp = '';
+  MR.push(r); renderMR();
+  const el = document.querySelector('[data-mr="' + r.k + '"] .emp-in'); if (el) el.focus();
+}
+function renderMR() {
+  if (!MR.length) { $('mr_list').innerHTML = '<div class="hint" style="padding:8px 0">Koi row nahi. "+ Row jodo" dabao.</div>'; return; }
+  $('mr_list').innerHTML = MR.map((r, i) =>
+    '<div class="mr" data-mr="' + r.k + '">' +
+      '<input class="emp-in" list="mr_emps" placeholder="' + (i + 1) + '. Employee code ya naam" value="' + esc(r.emp) + '" data-f="emp">' +
+      '<select data-f="type" class="' + r.type + '"><option' + (r.type === 'IN' ? ' selected' : '') + '>IN</option><option' + (r.type === 'OUT' ? ' selected' : '') + '>OUT</option></select>' +
+      '<input type="date" value="' + esc(r.date) + '" data-f="date">' +
+      '<input type="time" value="' + esc(r.time) + '" data-f="time">' +
+      '<button class="small danger x" data-mrdel="' + r.k + '" title="Row hatao">✕</button>' +
+      (r.res ? '<div class="res' + (r.ok ? ' ok' : '') + '">' + esc(r.res) + '</div>' : '') +
+    '</div>').join('');
+}
+function mrFindEmp(txt) {
+  const t = String(txt || '').trim(); if (!t) return null;
+  const code = t.split(/\s+[–-]\s+/)[0].trim().toUpperCase();
+  let e = ADM.find(x => x.id === code);
+  if (!e) { const q = t.toLowerCase(); const m = ADM.filter(x => x.name.toLowerCase() === q || (x.nick && x.nick.toLowerCase() === q)); if (m.length === 1) e = m[0]; }
+  return e || null;
+}
+async function mrSubmit() {
+  const note = $('mr_note').value;
+  const todo = [];
+  MR.forEach(r => { r.res = ''; r.ok = false; });
+  for (const r of MR) {
+    const e = mrFindEmp(r.emp);
+    if (!e) { r.res = '✕ Employee nahi mila – list se chuno'; continue; }
+    if (!r.date || !r.time) { r.res = '✕ Date aur time dono bharo'; continue; }
+    r.id = e.id; todo.push(r);
+  }
+  if (!todo.length) { renderMR(); msg('mr_msg', MR.length ? 'Pehle rows sahi bharo' : 'Koi row nahi hai', 'err'); return; }
+  // ek hi employee + din + type do baar na ho
+  const seen = {};
+  for (const r of todo) { const k = r.id + '|' + r.date + '|' + r.type; if (seen[k]) { r.res = '✕ Ye row upar wali row jaisi hai (same employee, din, ' + r.type + ')'; r.dup = true; } seen[k] = 1; }
+  const go = todo.filter(r => !r.dup);
+  if (!confirm(go.length + ' rows ka punch lagana hai?')) { renderMR(); return; }
+  // IN pehle, phir OUT – taaki OUT ki jaanch naye IN se ho
+  go.sort((a, b) => a.date.localeCompare(b.date) || (a.type === b.type ? 0 : a.type === 'IN' ? -1 : 1) || a.time.localeCompare(b.time));
+  $('mr_go').disabled = true; msg('mr_msg', 'Lag raha hai… (0/' + go.length + ')');
+  let done = 0, fail = 0, n = 0;
+  for (const r of go) {
+    try {
+      const j = await bulkPunch([r.id], r.date, r.time, r.type, note);
+      if (j.done.length) { r.ok = true; r.res = '✓ Lag gaya'; done++; }
+      else { r.res = '✕ ' + (j.skipped[0] ? j.skipped[0].why : 'Nahi laga'); fail++; }
+    } catch (e) { r.res = '✕ ' + e.message; fail++; }
+    msg('mr_msg', 'Lag raha hai… (' + (++n) + '/' + go.length + ')');
+  }
+  MR = MR.filter(r => !r.ok);
+  renderMR();
+  $('mr_go').disabled = false;
+  const bad = MR.filter(r => r.res).length;
+  msg('mr_msg', (done ? '✓ ' + done + ' rows lag gayi' : '') + (bad ? (done ? '\n' : '') + '✕ ' + bad + ' rows nahi lagi – unke neeche wajah likhi hai, theek karke dobara dabao' : ''), bad ? 'err' : 'ok');
+  if (!MR.length) mrAdd();
+  syncToday();
+}
+
 /* ---------- admin: report ---------- */
 let RP = [];
 const hm = ms => { const m = Math.round(ms / 60000); return Math.floor(m / 60) + 'h ' + pad(m % 60) + 'm'; };
@@ -1026,6 +1122,7 @@ function switchTab(id) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === id));
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('hidden', t.id !== id));
   if ((id === 't_emps' || id === 't_manual') && !ADM.length) loadAdminEmployees();
+  if (id === 't_manual' && !MR.length) mrAdd();
   if (id === 't_manual') { if (!$('mp_date').value) { $('mp_date').value = ymd(new Date()); $('mp_time').value = fmtHM(Date.now()); } renderManualList(); }
   if (id === 't_set') { updateQueueBadge(); $('g_gap').value = S.gapMin || 60; }
 }
@@ -1147,7 +1244,26 @@ function bindEvents() {
   };
   $('photoview').onclick = () => hide('photoview');
 
-  // manual
+  // manual: tareeka chuno
+  const mmode = rows => { $('mm_rows').classList.toggle('on', rows); $('mm_same').classList.toggle('on', !rows);
+    $('mp_rowsec').classList.toggle('hidden', !rows); $('mp_samesec').classList.toggle('hidden', rows); };
+  $('mm_rows').onclick = () => mmode(true);
+  $('mm_same').onclick = () => mmode(false);
+  // manual: row wise
+  $('mr_add').onclick = () => mrAdd(true);
+  $('mr_clear').onclick = () => { if (MR.length && !confirm('Saari rows hatani hain?')) return; MR = []; mrAdd(); msg('mr_msg', ''); };
+  $('mr_go').onclick = mrSubmit;
+  const mrUpd = e => {
+    const box = e.target.closest('[data-mr]'); const f = e.target.getAttribute('data-f'); if (!box || !f) return;
+    const r = MR.find(x => String(x.k) === box.getAttribute('data-mr')); if (!r) return;
+    r[f] = e.target.value;
+    if (f === 'type') e.target.className = r.type;
+  };
+  $('mr_list').addEventListener('input', mrUpd);
+  $('mr_list').addEventListener('change', mrUpd);
+  $('mr_list').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.getAttribute('data-f')) { e.preventDefault(); const box = e.target.closest('[data-mr]'); if (box && box.getAttribute('data-mr') === String(MR[MR.length - 1].k)) mrAdd(true); } });
+  $('mr_list').onclick = e => { const k = e.target.getAttribute && e.target.getAttribute('data-mrdel'); if (!k) return; MR = MR.filter(r => String(r.k) !== k); renderMR(); };
+  // manual: sabka ek time
   $('mp_in').onclick = () => setMpType('IN');
   $('mp_out').onclick = () => setMpType('OUT');
   $('mp_q').addEventListener('input', renderManualList);
