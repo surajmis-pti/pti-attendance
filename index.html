@@ -329,6 +329,13 @@
       <div class="row"><button id="dept_new">+ Naya Department</button></div>
       <div id="dept_msg" class="msg"></div>
     </div>
+
+    <div class="sec">
+      <h3>🗑 Delete hue employees</h3>
+      <div class="hint" style="margin-top:0">Galti se delete ho gaya ho to "Wapas lao" dabao – employee aur uske punch wapas aa jayenge. Agar wahi code kisi naye employee ko de diya hai to pehle us naye ka code badalna hoga.</div>
+      <div id="dellist" style="margin-top:8px"></div>
+      <div id="del_msg" class="msg"></div>
+    </div>
   </div>
 
   <!-- SETTINGS -->
@@ -369,6 +376,20 @@
       <div class="hint">Is time ke andar dobara aane par "Already IN" dikhega. OUT lagne ke baad us din har baar "Already OUT".</div>
       <div class="row"><button id="g_save">Save</button></div>
       <div id="g_msg" class="msg"></div>
+    </div>
+
+    <div class="sec">
+      <h3>💾 Backup</h3>
+      <div class="hint" style="margin-top:0">Roz apne aap ek backup banta hai, aur kisi employee ko delete karne se pehle bhi. Aakhri 15 backup server par rehte hain. Zaroori ho to file download karke apne computer / Drive mein bhi rakh lo.</div>
+      <div id="bk_now" class="hint"></div>
+      <div class="row">
+        <button id="bk_make">➕ Abhi backup banao</button>
+        <button id="bk_dl_now">⬇ Abhi ka data download (file)</button>
+      </div>
+      <div class="row"><button id="bk_file_btn" class="ghost">📂 Download ki hui file se wapas lao</button></div>
+      <input id="bk_file" type="file" accept=".json,application/json" class="hidden">
+      <div id="bk_msg" class="msg"></div>
+      <div id="bk_list" style="margin-top:6px"></div>
     </div>
 
     <div class="sec">
@@ -421,7 +442,7 @@ if (S.v3 !== 1) { S.v3 = 1; S.threshold = DEFAULTS.threshold; if (S.voice == nul
 let EMPS = loadJSON(LS.emps, []);          // kiosk matching: [{id,name,nick,dept_id,dept,d}]
 let DEPTS = loadJSON(LS.depts, []);        // [{id,name}]
 let STATE = loadJSON(LS.state, {});        // empId -> {day, in, out}
-let ADM = [], ADEPTS = [];                 // admin list (details)
+let ADM = [], ADEPTS = [], ADEL = [];                 // admin list (details)
 let TOK = null;                            // admin session token (memory only)
 let MATCH = [], ALLMATCH = [], empMap = {};
 let mode = 'loading';
@@ -938,7 +959,8 @@ async function loadAdminEmployees(quiet) {
   if (!quiet) msg('emp_msg', 'Load ho raha hai…');
   try {
     const j = await adminRpc('att_admin_employees');
-    ADM = j.employees || []; ADEPTS = j.departments || [];
+    ADM = j.employees || []; ADEPTS = j.departments || []; ADEL = j.deleted || [];
+    renderDeleted();
     fillDeptSelects(); renderEmployees(); renderDepts(); renderManualList(); mrFillList();
     if (!quiet) msg('emp_msg', '');
   } catch (e) { msg('emp_msg', 'Employees nahi aaye: ' + e.message, 'err'); }
@@ -996,6 +1018,53 @@ async function deleteEmployee(emp, btn) {
     closeForm(); await loadAdminEmployees(true); syncEmployees(); syncToday();
     msg('emp_msg', '✓ ' + emp.id + ' – ' + emp.name + ' delete ho gaya' + (j.mode === 'hidden' ? ' (' + j.punches + ' punch bhi hata diye)' : ''), 'ok');
   } catch (e) { msg('emp_msg', 'Delete nahi hua: ' + e.message, 'err'); if (btn) btn.disabled = false; }
+}
+
+function renderDeleted() {
+  if (!$('dellist')) return;
+  $('dellist').innerHTML = ADEL.length ? ADEL.map(d =>
+    '<div class="dept"><div><b>' + esc(d.id) + ' – ' + esc(d.name) + '</b><br><small>' + esc(d.dept || 'bina department') + ' • ' + d.punches + ' punch • delete: ' + esc(d.when) + '</small></div>' +
+    '<div style="display:flex;gap:6px"><button class="small okb" data-undel="' + esc(d.key) + '"' + (d.code_free ? '' : ' title="Ye code ab kisi aur ka hai"') + '>↩ Wapas lao</button></div></div>').join('')
+    : '<div class="hint">Koi delete hua employee nahi</div>';
+}
+
+/* ---------- admin: backup ---------- */
+function fmtCounts(c) { return c ? (c.employees + ' employees • ' + c.punches + ' punch • ' + c.departments + ' departments') : ''; }
+async function loadBackups() {
+  try {
+    const j = await adminRpc('att_list_backups');
+    $('bk_now').textContent = 'Abhi system mein: ' + fmtCounts(j.now);
+    $('bk_list').innerHTML = (j.backups || []).length ? j.backups.map(b =>
+      '<div class="dept"><div><b>' + esc(b.when) + '</b> <small>' + esc(b.reason) + '</small><br><small>' + esc(fmtCounts(b.counts)) + '</small></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="small ghost" data-bkdl="' + b.id + '" data-bkwhen="' + esc(b.when) + '">⬇ File</button>' +
+      '<button class="small danger" data-bkres="' + b.id + '" data-bkwhen="' + esc(b.when) + '">↩ Wapas lao</button></div></div>').join('')
+      : '<div class="hint">Abhi koi backup nahi – "Abhi backup banao" dabao</div>';
+  } catch (e) { msg('bk_msg', 'Backup list nahi aayi: ' + e.message, 'err'); }
+}
+function saveFile(name, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+async function downloadBackup(id, when) {
+  msg('bk_msg', 'File ban rahi hai…');
+  try {
+    const j = await adminRpc('att_get_backup', { p_id: id == null ? null : Number(id) });
+    const tag = (when || fmtDT(Date.now())).replace(/[: ]/g, '-');
+    saveFile('PTI_Attendance_Backup_' + tag + '.json', JSON.stringify(j.data));
+    msg('bk_msg', '✓ Backup file download ho gayi – ise sambhal ke rakho', 'ok');
+  } catch (e) { msg('bk_msg', 'Download nahi hua: ' + e.message, 'err'); }
+}
+async function restoreBackup(args, label) {
+  const typed = prompt('⚠ ' + label + '\n\nAbhi ka SAARA data (employees, departments, punch) is backup jaisa ho jayega.\nAbhi ka data pehle apne aap ek naye backup mein save ho jayega, taaki galti ho to wapas aa sake.\n\nPakka karne ke liye likho: RESTORE', '');
+  if (typed === null) return;
+  if (typed.trim().toUpperCase() !== 'RESTORE') { msg('bk_msg', 'RESTORE nahi likha – kuch nahi badla', 'err'); return; }
+  msg('bk_msg', 'Data wapas aa raha hai…');
+  try {
+    const j = await adminRpc('att_restore', Object.assign({ p_id: null, p_data: null }, args));
+    await loadAdminEmployees(true); syncEmployees(); syncToday(); loadBackups();
+    msg('bk_msg', '✓ Data wapas aa gaya: ' + fmtCounts(j.counts) + '. Google Sheet 5 minute mein theek ho jayegi.', 'ok');
+  } catch (e) { msg('bk_msg', 'Restore nahi hua: ' + e.message, 'err'); }
 }
 
 /* ---------- admin: manual / bulk punch ---------- */
@@ -1145,7 +1214,7 @@ function switchTab(id) {
   if ((id === 't_emps' || id === 't_manual') && !ADM.length) loadAdminEmployees();
   if (id === 't_manual' && !MR.length) mrAdd();
   if (id === 't_manual') { if (!$('mp_date').value) { $('mp_date').value = ymd(new Date()); $('mp_time').value = fmtHM(Date.now()); } renderManualList(); }
-  if (id === 't_set') { updateQueueBadge(); $('g_gap').value = S.gapMin || 60; }
+  if (id === 't_set') { updateQueueBadge(); $('g_gap').value = S.gapMin || 60; loadBackups(); }
 }
 function openAdmin() {
   mode = 'admin';
@@ -1367,6 +1436,32 @@ function bindEvents() {
       try { await adminRpc('att_delete_department', { p_id: d.id }); await loadAdminEmployees(true); syncEmployees(); msg('dept_msg', '✓ Hata diya', 'ok'); }
       catch (err) { msg('dept_msg', 'Nahi hua: ' + err.message, 'err'); }
     }
+  };
+
+  // delete hue employees wapas
+  $('dellist').onclick = async e => {
+    const k = e.target.getAttribute && e.target.getAttribute('data-undel'); if (!k) return;
+    const d = ADEL.find(x => x.key === k);
+    if (!confirm(d.id + ' – ' + d.name + ' ko wapas laana hai? (' + d.punches + ' punch bhi wapas aayenge)')) return;
+    e.target.disabled = true;
+    try { const j = await adminRpc('att_undelete_employee', { p_key_id: k }); await loadAdminEmployees(true); syncEmployees(); syncToday();
+      msg('del_msg', '✓ ' + j.id + ' wapas aa gaya (' + j.punches + ' punch)', 'ok'); }
+    catch (err) { msg('del_msg', 'Nahi hua: ' + err.message, 'err'); e.target.disabled = false; }
+  };
+  // backup
+  $('bk_make').onclick = async () => { msg('bk_msg', 'Backup ban raha hai…'); try { await adminRpc('att_backup_now'); await loadBackups(); msg('bk_msg', '✓ Backup ban gaya', 'ok'); } catch (e) { msg('bk_msg', 'Nahi bana: ' + e.message, 'err'); } };
+  $('bk_dl_now').onclick = () => downloadBackup(null, null);
+  $('bk_list').onclick = e => {
+    const t = e.target; const dl = t.getAttribute && t.getAttribute('data-bkdl'); const rs = t.getAttribute && t.getAttribute('data-bkres');
+    if (dl) downloadBackup(dl, t.getAttribute('data-bkwhen'));
+    if (rs) restoreBackup({ p_id: Number(rs) }, t.getAttribute('data-bkwhen') + ' wala backup wapas laana hai?');
+  };
+  $('bk_file_btn').onclick = () => { $('bk_file').value = ''; $('bk_file').click(); };
+  $('bk_file').onchange = async () => {
+    const f = $('bk_file').files[0]; if (!f) return;
+    let data; try { data = JSON.parse(await f.text()); } catch (e) { msg('bk_msg', 'Ye file sahi backup file nahi hai', 'err'); return; }
+    if (!data || data.app !== 'PTI Face Attendance') { msg('bk_msg', 'Ye PTI Attendance ki backup file nahi lagti', 'err'); return; }
+    restoreBackup({ p_data: data }, 'File "' + f.name + '" (' + (data.created || '') + ') se data wapas laana hai?');
   };
 
   // settings
